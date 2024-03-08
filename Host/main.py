@@ -13,14 +13,17 @@ from classes.serial_wrapper import SerialWrapper
 # config values
 serial_device_name = 'COM6'
 tracked_statistics = ['Core Usage', 'Physical Memory Load', 'GPU Utilization']
-cpu_registry_id = 1
-memory_registry_id = 0
 transmit_interval = 0.5
-log_transmitted_values = False
+log_transmitted_values = True
 
 # other
-hwinfo_registry = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'SOFTWARE\HWiNFO64\VSB')
 console = Console()
+try:
+    hwinfo_registry = winreg.OpenKey(winreg.HKEY_CURRENT_USER, r'SOFTWARE\HWiNFO64\VSB')
+except FileNotFoundError:
+    console.print(f"[bold red]HWiNFO Registry Not Found[/bold red]\n"
+                  f"Ensure HWiNFO is started, Gadget is enabled, and values are chosen")
+    exit(1)
 
 
 def current_time():
@@ -28,15 +31,16 @@ def current_time():
     return f"[aquamarine3][{datetime.now().strftime('%T.%f')[:-3]}][/aquamarine3] "
 
 
-async def initialize():
-    console.print(f"{current_time()}[#2196F3]Resource Monitor Gauge - Trebuchet[/#2196F3]\n"
+async def print_system_info():
+    console.print(f"{current_time()}[#2196F3]Resource Monitor Gauge - Host Device[/#2196F3]\n"
                   f"   Gathers system resource information, and transmits it to a receiving device.\n")
     platform_info = uname()
     cpu_info = get_cpu_info()
+    cpu_speed = round(float(cpu_info['hz_advertised_friendly'][0:6]), 2)
     console.print(f"{current_time()}[purple]System Information[/purple]\n"
-                  f"   [bold]OS:[/bold] {platform_info.system} {platform_info.release} ({platform_info.version})\n"
-                  f"   [bold]CPU:[/bold] {cpu_info['brand_raw']} ({round(float(cpu_info['hz_advertised_friendly'][0:6]), 2)} GHz)\n"
-                  f"   [bold]Memory:[/bold] {round(psutil.virtual_memory().total / 1024.0 / 1024.0 / 1024.0, 1)} GB\n",
+                  f"   [bold blue]OS:[/bold blue] {platform_info.system} {platform_info.release} ({platform_info.version})\n"
+                  f"   [bold blue]CPU:[/bold blue] {cpu_info['brand_raw']} ({cpu_speed} GHz)\n"
+                  f"   [bold blue]Memory:[/bold blue] {round(psutil.virtual_memory().total / 1024.0 / 1024.0 / 1024.0, 1)} GB\n",
                   highlight=False)
 
 
@@ -60,37 +64,37 @@ async def validate_registry_keys():
         exit(1)
 
     key_ids = sorted(key_ids, key=lambda x: tracked_statistics.index(x[0]))  # this is purely for my satisfaction :3
+    return key_ids
 
 
-async def get_resource_usage():
-    cpu_usage = winreg.QueryValueEx(hwinfo_registry, f'ValueRaw{cpu_registry_id}')
-    memory_usage = winreg.QueryValueEx(hwinfo_registry, f'ValueRaw{memory_registry_id}')
-    return cpu_usage[0], memory_usage[0]
+async def get_resource_usage(legend):
+    usage_values = []
+    for pair in legend:
+        registry_result = winreg.QueryValueEx(hwinfo_registry, f'ValueRaw{pair[1]}')
+        usage_values.append(registry_result[0])
+    return usage_values
 
 
 async def main():
-    await initialize()
-    await validate_registry_keys()
-    serial_connection = SerialWrapper(serial_device_name, 9600)
+    await print_system_info()
+    legend = await validate_registry_keys()
+    # serial_connection = SerialWrapper(serial_device_name, 9600)
 
-    connection_established = True
+    while True:
+        usages = await get_resource_usage(legend)
+        converted_usages = {}
+        for position, usage in enumerate(usages):
+            converted_usages[legend[position][0]] = round(float(usage) / 100. * 4095)
 
-    # make a connection agent on both sides of the client and validate the order of the statistics before true data flow    
-
-    while connection_established:
-        usages = await get_resource_usage()
-        converted_usages = []
-        for usage in usages:
-            converted_usages.append(round(float(usage) / 100. * 4095))  # 12 bit conversion
-
-        packet = ','.join(map(str, converted_usages))
-
-        serial_connection.send_data(packet)
+        # serial_connection.send_data(packet)
 
         if log_transmitted_values:
-            console.print(f"{current_time()}{packet}")
+            console.print(f"{current_time()}{converted_usages}")
         await asyncio.sleep(transmit_interval)
 
 
 if __name__ == '__main__':
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        console.print("Exiting...")
