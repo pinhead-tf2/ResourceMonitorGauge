@@ -1,4 +1,5 @@
 import asyncio
+import json
 import re
 import winreg
 from datetime import datetime
@@ -8,11 +9,13 @@ import psutil
 from cpuinfo import get_cpu_info
 from rich.console import Console
 
-from classes.serial_wrapper import SerialWrapper
+from Host.serial_wrapper import SerialWrapper
 
 # config values
-serial_device_name = 'COM6'
-tracked_statistics = ['Core Usage', 'Physical Memory Load', 'GPU Utilization']
+serial_device_name = 'COM9'
+tracked_statistics = ['Core Usage', 'Physical Memory Load', 'GPU Core Load', 'Current DL rate', 'Current UP rate']
+# tracked_statistics = ['Current DL rate', 'Current UP rate']
+max_internet_speed = 125000  # in kilobytes
 transmit_interval = 0.5
 log_transmitted_values = True
 
@@ -60,7 +63,8 @@ async def validate_registry_keys():
     if len(key_ids) != len(tracked_statistics):
         console.print(f"{current_time()}[bold red]Registry key mismatch[/bold red]\n"
                       f"Tracked Statistics Count: {len(tracked_statistics)}\n"
-                      f"Validated Statistics Count: {len(key_ids)}")
+                      f"Validated Statistics Count: {len(key_ids)}\n"
+                      f"Validated Statistics: {key_ids}")
         exit(1)
 
     key_ids = sorted(key_ids, key=lambda x: tracked_statistics.index(x[0]))  # this is purely for my satisfaction :3
@@ -69,24 +73,36 @@ async def validate_registry_keys():
 
 async def get_resource_usage(legend):
     usage_values = []
+    net_stat = []
     for pair in legend:
         registry_result = winreg.QueryValueEx(hwinfo_registry, f'ValueRaw{pair[1]}')
+        if pair[0] == 'Current DL rate' or pair[0] == 'Current UP rate':
+            net_stat.append(float(registry_result[0]))
+            continue
         usage_values.append(registry_result[0])
+
+    if len(net_stat):
+        largest_value = max(net_stat)
+        net_usage = largest_value / max_internet_speed * 100
+        usage_values.append(net_usage)
     return usage_values
 
 
 async def main():
     await print_system_info()
     legend = await validate_registry_keys()
-    # serial_connection = SerialWrapper(serial_device_name, 9600)
+    serial_connection = SerialWrapper(serial_device_name, 9600)
 
     while True:
         usages = await get_resource_usage(legend)
         converted_usages = {}
         for position, usage in enumerate(usages):
-            converted_usages[legend[position][0]] = round(float(usage) / 100. * 4095)
+            if legend[position][0] == 'Current DL rate' or legend[position][0] == 'Current UP rate':
+                converted_usages['Current Net Max Rate'] = round(float(usage) / 100. * 4095)
+            else:
+                converted_usages[legend[position][0]] = round(float(usage) / 100. * 4095)
 
-        # serial_connection.send_data(packet)
+        serial_connection.send_data(json.dumps(converted_usages))
 
         if log_transmitted_values:
             console.print(f"{current_time()}{converted_usages}")

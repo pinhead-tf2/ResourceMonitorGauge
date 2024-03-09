@@ -1,6 +1,4 @@
 import asyncio
-import json
-import re
 import winreg
 from datetime import datetime
 from platform import uname
@@ -9,12 +7,10 @@ import psutil
 from cpuinfo import get_cpu_info
 from rich.console import Console
 
-from classes.serial_wrapper import SerialWrapper
-
 # config values
 serial_device_name = 'COM6'
 keys = [['Core Usage', '1'], ['Physical Memory Load', '0'], ['GPU Utilization', '2']]
-transmit_interval = 0.5
+transmit_interval = 1
 log_transmitted_values = True
 
 # other
