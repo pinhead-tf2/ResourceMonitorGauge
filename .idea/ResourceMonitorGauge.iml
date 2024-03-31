@@ -5,6 +5,7 @@
       <excludeFolder url="file://$MODULE_DIR$/Trebuchet/venv" />
       <excludeFolder url="file://$MODULE_DIR$/venv" />
       <excludeFolder url="file://$MODULE_DIR$/.venv" />
+      <excludeFolder url="file://$MODULE_DIR$/Host/.venv" />
     </content>
     <orderEntry type="jdk" jdkName="Python 3.12 (ResourceMonitorGauge)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />

@@ -9,15 +9,14 @@ import psutil
 from cpuinfo import get_cpu_info
 from rich.console import Console
 
-from Host.serial_wrapper import SerialWrapper
+from serial_wrapper import SerialWrapper
 
 # config values
 serial_device_name = 'COM9'
 tracked_statistics = ['Core Usage', 'Physical Memory Load', 'GPU Core Load', 'Current DL rate', 'Current UP rate']
-# tracked_statistics = ['Current DL rate', 'Current UP rate']
 max_internet_speed = 125000  # in kilobytes
 transmit_interval = 0.5
-log_transmitted_values = True
+log_transmitted_values = False
 
 # other
 console = Console()
