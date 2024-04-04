@@ -12,7 +12,7 @@ from rich.console import Console
 from serial_wrapper import SerialWrapper
 
 # config values
-serial_device_name = 'COM9'
+serial_device_name = 'COM5'
 tracked_statistics = ['Core Usage', 'Physical Memory Load', 'GPU Core Load', 'Current DL rate', 'Current UP rate']
 max_internet_speed = 125000  # in kilobytes
 transmit_interval = 0.5

@@ -1,6 +1,6 @@
 import asyncio
 import json
-import threading
+import time
 from datetime import datetime
 
 import RPi.GPIO as GPIO
@@ -14,15 +14,12 @@ from adafruit_mcp4725 import MCP4725 as initialize_dac
 serial_port = "/dev/serial0"
 available_lights = [17, 27, 22, 23]
 display_rotate_timer = 15
+announce_display = True
 
 # other
 i2c = initialize_i2c(board.SCL, board.SDA)  # get the SCL and SDA ports initialized
 dac = initialize_dac(i2c)  # prepare the DAC
 console = Console()
-
-cached_values = None
-current_display_value = None
-led_position = 0
 
 
 def current_time():
@@ -30,36 +27,12 @@ def current_time():
     return f"[aquamarine3][{datetime.now().strftime('%T.%f')[:-3]}][/aquamarine3] "
 
 
-def display_values():
-    global cached_values, current_display_value, led_position  # i know repeat creation of global is bad but ¯\_(ツ)_/¯
+async def prepare_visuals():
+    console.print(f"{current_time()}Preparing visuals...")
 
-    if cached_values is not None:
-        all_keys = list(cached_values.keys())
-
-        if current_display_value is not None:
-            current_index = all_keys.index(current_display_value)
-
-            if len(all_keys) == current_index + 1:
-                led_position = 0
-                current_display_value = all_keys[led_position]
-            else:
-                led_position = current_index + 1
-                current_display_value = all_keys[led_position]
-        else:
-            led_position = 0
-            current_display_value = all_keys[led_position]
-
-    try:
-        console.print(f"{current_time()}"
-                      f"Displaying {current_display_value}, LED {available_lights[led_position]} at {led_position}\n"
-                      f"Current Values: {cached_values}")
-        threading.Timer(display_rotate_timer, display_values).start()
-    except RuntimeError or KeyboardInterrupt:
-        console.print(f"{current_time()}Bye!")
-
-
-async def exercise_gauges():
-    console.print(f"{current_time()}Exercising gauges...")
+    for light in available_lights:
+        GPIO.setup(light, GPIO.OUT)
+        GPIO.output(light, GPIO.HIGH)
 
     for i in range(4095):
         dac.raw_value = i
@@ -69,53 +42,101 @@ async def exercise_gauges():
     for i in range(4095, -1, -1):
         dac.raw_value = i
 
+    for light in available_lights:
+        GPIO.output(light, GPIO.LOW)
+
 
 async def main():
-    await exercise_gauges()
+    await prepare_visuals()
 
-    serial_connection = serial.Serial(serial_port, 9600)
-    console.print(f"{current_time()}Listening on {serial_port}...")
-    threading.Timer(5.0, display_values).start()
+    serial_connection = None
+    while not serial_connection:
+        try:
+            serial_connection = serial.Serial(serial_port, 9600)
+            console.print(f"{current_time()}Listening on {serial_port}...")
+        except serial.SerialException:
+            console.printf(
+                f"{current_time()}[bold red][violet]{serial_port}[/violet] not found! Retrying in 15 seconds...")
+            await asyncio.sleep(15)
 
+    # prep variables
+    # data reading
+    cached_values = list()
     line_cache = []
-    global cached_values, current_display_value, led_position
+
+    # lights
+    next_rotation = time.time() + 1
+    active_value_index = -1  # will only be none if lights aren't configured/misconfigured
+    used_lights = []
 
     while True:
         bytes_in_buffer = serial_connection.in_waiting  # gets the amount of bytes in buffer
         received_data = serial_connection.read(bytes_in_buffer)  # reads all data in the buffer
 
+        # data receiving
         if received_data:
+            # check and see if we hit the end of the transferred string, append it to cache if not ended yet
             if received_data == b'\r':
-                received_string = ''.join(line_cache)
+                received_string = ''.join(line_cache)  # combine cache with end of string to get full block of data
+
                 try:
                     cached_values = json.loads(received_string)
-                except json.decoder.JSONDecodeError:
+                except json.decoder.JSONDecodeError:  # handles occasional string endings that got missed
                     console.print(f"{current_time()}[bold red]DecodeError:[/bold red] {received_string}")
+
                 line_cache = []
             else:
-                line_cache.append(received_data.decode('utf-8'))
+                line_cache.append(received_data.decode('utf-8'))  # decode so it doesn't have to be decoded later
 
-        if cached_values and current_display_value and led_position is not None:  # basic exist check
-            dac.raw_value = cached_values[current_display_value]
-            try:
-                GPIO.output(available_lights[led_position], GPIO.HIGH)
+        # gauge & led handling
+        if time.time() > next_rotation:
+            all_keys = list(cached_values.keys())
 
-                if led_position < 0:
-                    GPIO.output(available_lights[-1], GPIO.LOW)
+            # setting up leds
+            if len(all_keys) > len(available_lights):
+                console.print(
+                    f"{current_time()}"
+                    f"[orange]Number of keys ({len(all_keys)}) exceeds available lights ({len(available_lights)})! "
+                    f"Lights cannot not be used this cycle[/orange]")
+                active_value_index = None
+            elif len(all_keys) != len(used_lights):
+                bindings = []
+                for index, key in enumerate(all_keys):
+                    used_lights.append(available_lights[index])
+                    bindings.append([key, available_lights[index]])
+
+                console.print(f"{current_time()}[green]Light Bindings: [/green]{bindings}")
+
+            # handle all displays
+            if active_value_index is not None:
+                # keep active_value_index between 0 and length of used_lights - 1
+                GPIO.output(used_lights[active_value_index], GPIO.LOW)
+
+                if active_value_index != len(used_lights) - 1:
+                    active_value_index += 1
                 else:
-                    GPIO.output(available_lights[led_position - 1], GPIO.LOW)
-            except IndexError:  # led position list might be too short, avoid issues
-                console.print(f"{current_time()}[bold red]led_position array length mismatch[/bold red]\n"
-                              f"Data point count too large for available_lights list")
-                exit(1)
+                    active_value_index = 0
+
+                current_key = list(cached_values.keys())[active_value_index]
+                current_value = list(cached_values.values())[active_value_index]
+
+                GPIO.output(used_lights[active_value_index], GPIO.HIGH)
+                dac.raw_value = current_value
+
+                # handles the optional announcer/debugger
+                if announce_display:
+                    console.print(f"{current_time()}"
+                                  f"Current Display: {current_key} (LED {active_value_index} @ {available_lights[active_value_index]})\n"
+                                  f"{" "*15}Current Value: {current_value} (Real: {round(current_value / 4095 * 100, 1)}%)\n"
+                                  f"{" "*15}Cached Values: {cached_values}")
+
+            # finally, set the next timer
+            next_rotation = time.time() + display_rotate_timer
 
 
 if __name__ == '__main__':
     GPIO.setmode(GPIO.BCM)
     GPIO.setwarnings(False)
-    for light in available_lights:
-        GPIO.setup(light, GPIO.OUT)
-        GPIO.output(light, GPIO.LOW)
 
     try:
         asyncio.run(main())
