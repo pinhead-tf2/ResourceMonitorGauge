@@ -1,6 +1,6 @@
 # Hello
 
-This is the Git repository for my CNIT 361 final project, which is an analog gauge that displays a resource usage statistic of your computer. 
+This is the Git repository for my CNIT 361 final project, which is an analog gauge that displays a system monitoring info of your computer. 
 
 # Requirements
 
